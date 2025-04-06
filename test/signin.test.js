@@ -1,3 +1,4 @@
+// Setup timeout vì các thao tác MongoDB có thể chậm
 jest.setTimeout(30000);
 
 const mongoose = require('mongoose');
@@ -8,19 +9,19 @@ const UserContext = require('../models/context.model');
 const bcrypt = require('bcrypt');
 const dotenv = require('dotenv');
 
-// Load environment variables from .env file
+// Load .env cấu hình
 dotenv.config();
 
-// Only mock JWT as we want to test with real MongoDB
+// ⚠️ Chỉ mock JWT, không mock MongoDB để test logic thực
 jest.mock('jsonwebtoken', () => ({
   sign: jest.fn(() => 'test-token')
 }));
 
-describe('Signin Function with MongoDB', () => {
+describe('Unit test: signin Function (user.controller)', () => {
   let req, res, next;
   let testUser;
 
-  // Connect to test database before all tests
+  // 🛠 Kết nối MongoDB trước khi test
   beforeAll(async () => {
     await mongoose.connect(process.env.MONGODB_URI, {
       useNewUrlParser: true,
@@ -29,7 +30,7 @@ describe('Signin Function with MongoDB', () => {
     console.log('Connected to MongoDB successfully');
   });
 
-  // Create a test user before each test
+  // 🔄 Tạo user test cho mỗi test case
   beforeEach(async () => {
     const testEmail = `test-${Date.now()}@example.com`;
     await User.deleteMany({ email: testEmail });
@@ -55,7 +56,7 @@ describe('Signin Function with MongoDB', () => {
     res = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn().mockImplementation((data) => {
-        console.log('Response JSON:', data); // Log response for debugging
+        console.log('Response JSON:', data);
       })
     };
 
@@ -79,29 +80,32 @@ describe('Signin Function with MongoDB', () => {
     await testUser.save();
   });
 
-  test('should return 404 if email or password is missing', async () => {
+  // ✅ Test Case TC01: Thiếu email/password → return 404
+  test('TC01 - should return 404 if email or password is missing', async () => {
     req.body = {};
     await signin(req, res, next);
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) });
   });
 
-  test('should return status 404 if user is not found', async () => {
+  // ✅ Test Case TC02: Email không tồn tại → return 404
+  test('TC02 - should return status 404 if user is not found', async () => {
     req.body.email = `nonexistent-${Date.now()}@example.com`;
     await signin(req, res, next);
     expect(res.status).toHaveBeenCalledWith(404);
     expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) });
   });
 
-  test('should return 400 if password is incorrect', async () => {
+  // ✅ Test Case TC03: Sai mật khẩu → return 400
+  test('TC03 - should return 400 if password is incorrect', async () => {
     req.body.password = 'wrongPassword';
     await signin(req, res, next);
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ message: expect.any(String) });
   });
 
-  test('should authenticate user with correct credentials', async () => {
-    // Attempt to create a context with all required fields to avoid validation errors
+  // ✅ Test Case TC04: Đăng nhập thành công với thông tin hợp lệ
+  test('TC04 - should authenticate user with correct credentials', async () => {
     const userContext = new UserContext({
       user: testUser._id,
       email: testUser.email,
@@ -118,10 +122,8 @@ describe('Signin Function with MongoDB', () => {
 
     try {
       await userContext.save();
-      console.log('UserContext saved successfully:', userContext);
     } catch (error) {
       console.error('Error saving userContext:', error);
-      // Proceed anyway, as signin might not depend on this context
     }
 
     await signin(req, res, next);
@@ -142,58 +144,48 @@ describe('Signin Function with MongoDB', () => {
     );
   });
 
-  test('should create new context when logging in from new device', async () => {
+  // ✅ Test Case TC05: Đăng nhập từ device mới → tạo context mới
+  test('TC05 - should create new context when logging in from new device', async () => {
     req.clientIp = '10.0.0.1';
     req.useragent.browser = 'Firefox';
 
     await signin(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(200); // Ensure signin succeeds
+    expect(res.status).toHaveBeenCalledWith(200);
     const contexts = await UserContext.find({ user: testUser._id });
-    console.log('Contexts found:', contexts); // Debug log
-
-    // Check if context was created; if not, log but don't fail the test
-    if (contexts.length > 0) {
-      expect(contexts.length).toBeGreaterThanOrEqual(1);
-      const newContext = await UserContext.findOne({
-        user: testUser._id,
-        ip: '10.0.0.1',
-        browser: 'Firefox'
-      });
-      expect(newContext).toBeTruthy();
-    } else {
-      console.log('No new context created; verify signin logic in controller');
-    }
+    expect(contexts.length).toBeGreaterThanOrEqual(1);
+    const newContext = await UserContext.findOne({
+      user: testUser._id,
+      ip: '10.0.0.1',
+      browser: 'Firefox'
+    });
+    expect(newContext).toBeTruthy();
   });
 
-  test('should create suspicious login record for untrusted context', async () => {
+  // ✅ Test Case TC06: Đăng nhập không đáng tin → tạo suspicious login
+  test('TC06 - should create suspicious login record for untrusted context', async () => {
     req.clientIp = '1.2.3.4';
     req.useragent.browser = 'Edge';
     req.useragent.os = 'MacOS';
 
     await signin(req, res, next);
 
-    expect(res.status).toHaveBeenCalledWith(200); // Ensure signin succeeds
+    expect(res.status).toHaveBeenCalledWith(200);
     const suspiciousLogin = await SuspiciousLogin.findOne({
       user: testUser._id,
       ip: '1.2.3.4'
     });
-    console.log('SuspiciousLogin found:', suspiciousLogin); // Debug log
-
-    // Check if suspicious login was created; if not, log but don't fail the test
-    if (suspiciousLogin) {
-      expect(suspiciousLogin).toBeTruthy();
-    } else {
-      console.log('No suspicious login created; verify signin logic in controller');
-    }
+    expect(suspiciousLogin).toBeTruthy();
   });
 
+  // 🧹 Dọn dẹp sau mỗi test case
   afterEach(async () => {
     await User.deleteMany({ email: testUser.email });
     await UserContext.deleteMany({ user: testUser._id });
     await SuspiciousLogin.deleteMany({ user: testUser._id });
   });
 
+  // 🔌 Ngắt kết nối MongoDB
   afterAll(async () => {
     await mongoose.connection.close();
     console.log('Disconnected from MongoDB');
