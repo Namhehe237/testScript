@@ -11,8 +11,11 @@ let moderatorToken = "";
 let communityId = "";
 let postId = "";
 
-// Mô phỏng đăng nhập và tạo user moderator trước mỗi test
+// Setup moderator user and token before all tests
 beforeAll(async () => {
+  // Ensure idempotency by removing old data
+  await User.deleteOne({ email: "tester@mod.socialecho.com" });
+
   const moderator = await User.create({
     name: "Mod Tester",
     email: "tester@mod.socialecho.com",
@@ -20,7 +23,6 @@ beforeAll(async () => {
     role: "moderator",
   });
 
-  // Đăng nhập để lấy token xác thực
   const res = await request(app).post("/users/signin").send({
     email: "tester@mod.socialecho.com",
     password: "test1234",
@@ -30,7 +32,6 @@ beforeAll(async () => {
 });
 
 describe("Moderator Restrictions and Management", () => {
-  // Test 10: Không cho phép moderator tạo cộng đồng
   it("TC-MOD-001 - should NOT allow moderator to create community", async () => {
     const res = await request(app)
       .post("/communities")
@@ -40,13 +41,12 @@ describe("Moderator Restrictions and Management", () => {
         description: "Moderator's community",
       });
 
-    // Nếu role check hoạt động đúng, phải bị từ chối với 401 hoặc 403
     expect([401, 403]).toContain(res.statusCode);
   });
 
-  // Setup: Tạo community, post và report
   it("Setup community, post, and report", async () => {
     const user = await User.findOne({ email: "tester@mod.socialecho.com" });
+
     const community = await Community.create({
       name: "mod-check",
       description: "moderator test community",
@@ -70,7 +70,6 @@ describe("Moderator Restrictions and Management", () => {
     });
   });
 
-  // Test 10.1: Moderator lấy danh sách bài viết bị report
   it("TC-MOD-002 - GET /communities/:name/reported-posts - should get reported posts", async () => {
     const res = await request(app)
       .get("/communities/mod-check/reported-posts")
@@ -81,7 +80,6 @@ describe("Moderator Restrictions and Management", () => {
     expect(res.body.reportedPosts.length).toBeGreaterThan(0);
   });
 
-  // Test 10.3: Xoá bài viết bị report
   it("TC-MOD-003 - DELETE /communities/reported-posts/:postId - should remove reported post", async () => {
     const res = await request(app)
       .delete(`/communities/reported-posts/${postId}`)
@@ -91,7 +89,6 @@ describe("Moderator Restrictions and Management", () => {
     expect(res.body.message).toBe("Reported post removed successfully");
   });
 
-  // Test 10.4: Moderator ban user khỏi cộng đồng
   it("TC-MOD-004 - POST /communities/:name/ban/:id - should ban user", async () => {
     const user = await User.findOne({ email: "tester@mod.socialecho.com" });
     const res = await request(app)
@@ -102,7 +99,6 @@ describe("Moderator Restrictions and Management", () => {
     expect(res.body.bannedUsers).toContainEqual(user._id.toString());
   });
 
-  // Test 10.4: Moderator unban user khỏi cộng đồng
   it("TC-MOD-005 - POST /communities/:name/unban/:id - should unban user", async () => {
     const user = await User.findOne({ email: "tester@mod.socialecho.com" });
     const res = await request(app)
@@ -112,4 +108,12 @@ describe("Moderator Restrictions and Management", () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.bannedUsers).not.toContainEqual(user._id.toString());
   });
+});
+
+// Cleanup after all tests
+afterAll(async () => {
+  await Community.deleteMany({ name: "mod-check" });
+  await Report.deleteMany({});
+  await Post.deleteMany({});
+  await User.deleteOne({ email: "tester@mod.socialecho.com" });
 });
